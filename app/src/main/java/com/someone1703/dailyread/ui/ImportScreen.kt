@@ -1,7 +1,6 @@
 package com.someone1703.dailyread.ui
 
 import android.net.Uri
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,12 +13,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -30,11 +32,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -45,10 +45,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -75,13 +81,33 @@ fun ImportScreen(
         },
         bottomBar = {
             if (!s.loading && s.error == null) {
-                Surface(tonalElevation = 3.dp) {
-                    Button(
-                        onClick = { vm.save()?.let(onSaved) },
-                        enabled = s.selectedCount > 0,
-                        modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp),
+                Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+                    Column(
+                        Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text("Create plan · ${s.selectedCount} days")
+                        if (s.selectedCount > 0) {
+                            Text(
+                                "One a day, you'd finish around ${finishDateLabel(s.selectedCount)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        Button(
+                            onClick = { vm.save()?.let(onSaved) },
+                            enabled = s.selectedCount > 0,
+                            modifier = Modifier.fillMaxWidth().height(52.dp),
+                        ) {
+                            Text(
+                                when (s.selectedCount) {
+                                    0 -> "Select at least one reading"
+                                    1 -> "Create plan · 1 day"
+                                    else -> "Create plan · ${s.selectedCount} days"
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -89,12 +115,23 @@ fun ImportScreen(
     ) { padding ->
         when {
             s.loading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(16.dp))
+                    Text("Reading your PDF…", style = MaterialTheme.typography.bodyLarge)
+                }
             }
-            s.error != null -> Box(Modifier.fillMaxSize().padding(padding).padding(32.dp), contentAlignment = Alignment.Center) {
-                Text(s.error.orEmpty())
+            s.error != null -> MessageState(
+                icon = Icons.Filled.ErrorOutline,
+                title = "Can't use this PDF",
+                message = s.error.orEmpty(),
+                modifier = Modifier.padding(padding),
+            ) {
+                Button(onClick = onBack) { Text("Go back") }
             }
-            else -> LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+            else -> LazyColumn(
+                Modifier.fillMaxSize().padding(padding).wrapContentWidth().widthIn(max = MaxContentWidth),
+            ) {
                 item {
                     Column(Modifier.padding(16.dp)) {
                         OutlinedTextField(
@@ -105,8 +142,8 @@ fun ImportScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
 
-                        Spacer(Modifier.height(20.dp))
-                        Text("Split into daily readings by", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(24.dp))
+                        SectionTitle("How much each day?")
                         Spacer(Modifier.height(8.dp))
                         val maxDepth = s.info?.maxDepth ?: 0
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -135,57 +172,67 @@ fun ImportScreen(
                         if (pages != null) {
                             Spacer(Modifier.height(8.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Pages per day", Modifier.weight(1f))
-                                IconButton(onClick = { vm.setMode(SplitMode.Pages((pages.perDay - 1).coerceAtLeast(1))) }) {
+                                Text("Pages per day", Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                                IconButton(
+                                    onClick = { vm.setMode(SplitMode.Pages((pages.perDay - 1).coerceAtLeast(1))) },
+                                    enabled = pages.perDay > 1,
+                                ) {
                                     Icon(Icons.Filled.Remove, contentDescription = "Fewer pages")
                                 }
-                                Text("${pages.perDay}", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "${pages.perDay}",
+                                    Modifier.widthIn(min = 32.dp),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Center,
+                                )
                                 IconButton(onClick = { vm.setMode(SplitMode.Pages(pages.perDay + 1)) }) {
                                     Icon(Icons.Filled.Add, contentDescription = "More pages")
                                 }
                             }
                         }
 
-                        Spacer(Modifier.height(20.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Daily reminder", style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "Nudges you once a day until you've read",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (s.reminderEnabled) {
-                                OutlinedButton(onClick = { showTime = true }) {
-                                    Text(timeLabel(s.reminderHour, s.reminderMinute))
-                                }
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            Switch(
-                                checked = s.reminderEnabled,
-                                onCheckedChange = { vm.setReminder(it, s.reminderHour, s.reminderMinute) },
-                            )
-                        }
+                        Spacer(Modifier.height(24.dp))
+                        ReminderCard(
+                            enabled = s.reminderEnabled,
+                            days = s.reminderDays,
+                            hour = s.reminderHour,
+                            minute = s.reminderMinute,
+                            onEnabledChange = { vm.setReminder(it, s.reminderHour, s.reminderMinute) },
+                            onDaysChange = vm::setReminderDays,
+                            onPickTime = { showTime = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
 
-                        Spacer(Modifier.height(20.dp))
+                        Spacer(Modifier.height(24.dp))
+                        SectionTitle("Readings")
                         Text(
-                            "Readings · untick any you want to skip (cover, index…)",
-                            style = MaterialTheme.typography.titleSmall,
+                            "Untick anything you don't want to read, like the cover or index.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    HorizontalDivider()
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
 
                 itemsIndexed(s.readings) { i, r ->
+                    val selected = i in s.included
                     Row(
-                        Modifier.fillMaxWidth().clickable { vm.toggle(i) }.padding(horizontal = 8.dp, vertical = 4.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .toggleable(value = selected, role = Role.Checkbox, onValueChange = { vm.toggle(i) })
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Checkbox(checked = i in s.included, onCheckedChange = { vm.toggle(i) })
-                        Column(Modifier.weight(1f)) {
-                            Text(r.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            val meta = listOfNotNull(r.subtitle, "${pagesLabel(r.startPage, r.endPage)} · ${r.pageCount}p")
+                        Checkbox(checked = selected, onCheckedChange = null)
+                        Column(Modifier.weight(1f).padding(start = 16.dp)) {
+                            Text(
+                                r.title,
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            val meta = listOfNotNull(r.subtitle, pagesLabel(r.startPage, r.endPage), pageCountLabel(r.pageCount))
                             Text(
                                 meta.joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall,
@@ -213,8 +260,16 @@ fun ImportScreen(
     }
 }
 
+@Composable
+private fun SectionTitle(text: String) {
+    Text(text, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+}
+
 private fun bookmarkLevelLabel(depth: Int) = when (depth) {
     1 -> "Chapters"
     2 -> "Sections"
     else -> "Sub-sections"
 }
+
+private fun finishDateLabel(days: Int): String =
+    LocalDate.now().plusDays(days.toLong() - 1).format(DateTimeFormatter.ofPattern("d MMM yyyy"))

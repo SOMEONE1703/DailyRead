@@ -5,6 +5,9 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
+/** All seven days, as ISO numbers (1 = Monday ... 7 = Sunday). */
+val EVERY_DAY: Set<Int> = (1..7).toSet()
+
 /** One day's reading: a contiguous page range of the PDF (0-based, inclusive). */
 @Serializable
 data class Reading(
@@ -29,6 +32,8 @@ data class Book(
     val reminderEnabled: Boolean = true,
     val reminderHour: Int = 7,
     val reminderMinute: Int = 0,
+    /** Days the reminder fires. Books saved before this field existed load as every day. */
+    val reminderDays: Set<Int> = EVERY_DAY,
     val createdAt: Long = System.currentTimeMillis(),
 ) {
     /** The first reading not yet done. Missed days simply roll forward, nothing piles up. */
@@ -45,9 +50,13 @@ data class Book(
 fun Long.toLocalDate(zone: ZoneId = ZoneId.systemDefault()): LocalDate =
     Instant.ofEpochMilli(this).atZone(zone).toLocalDate()
 
+/** Every day with at least one reading done, across all books. */
+fun readingDays(books: List<Book>, zone: ZoneId = ZoneId.systemDefault()): Set<LocalDate> =
+    books.flatMap { b -> b.readings.mapNotNull { it.completedAt?.toLocalDate(zone) } }.toSet()
+
 /** Consecutive days (ending today, or yesterday if nothing read yet today) with at least one reading done. */
 fun readingStreak(books: List<Book>, zone: ZoneId = ZoneId.systemDefault()): Int {
-    val days = books.flatMap { b -> b.readings.mapNotNull { it.completedAt?.toLocalDate(zone) } }.toSet()
+    val days = readingDays(books, zone)
     var day = LocalDate.now(zone)
     if (day !in days) day = day.minusDays(1)
     var streak = 0

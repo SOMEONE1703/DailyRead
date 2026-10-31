@@ -1,6 +1,7 @@
 package com.someone1703.dailyread.data
 
 import android.content.Context
+import com.someone1703.dailyread.pdf.PdfPageRenderer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -8,10 +9,12 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.InputStream
 
 /**
  * Stores the library as a single JSON file in the app's private storage.
- * The PDFs themselves are copied into filesDir/books/ and never leave the device.
+ * The PDFs themselves are copied into filesDir/books/, which is excluded from cloud backup,
+ * so after a restore a book can exist here without its PDF until the user reimports it.
  */
 class BookRepository(context: Context) {
 
@@ -33,6 +36,24 @@ class BookRepository(context: Context) {
         mutate { list -> list.filterNot { it.id == id } }
     }
 
+    /**
+     * Puts back the PDF of a book that lost it, keeping the plan and progress.
+     * Returns false if the file can't be read or has a different page count, since the plan's
+     * page ranges wouldn't line up with another file.
+     */
+    fun restorePdf(book: Book, source: InputStream): Boolean {
+        val tmp = File(booksDir, "${book.fileName}.tmp")
+        return try {
+            tmp.outputStream().use { source.copyTo(it) }
+            val pages = PdfPageRenderer(tmp).use { it.pageCount }
+            pages == book.pageCount && tmp.renameTo(fileFor(book))
+        } catch (e: Exception) {
+            false
+        } finally {
+            tmp.delete()
+        }
+    }
+
     fun setDone(bookId: String, index: Int, done: Boolean) = updateBook(bookId) { book ->
         book.copy(readings = book.readings.mapIndexed { i, r ->
             if (i == index) r.copy(completedAt = if (done) System.currentTimeMillis() else null) else r
@@ -41,6 +62,10 @@ class BookRepository(context: Context) {
 
     fun setReminder(bookId: String, enabled: Boolean, hour: Int, minute: Int) = updateBook(bookId) {
         it.copy(reminderEnabled = enabled, reminderHour = hour, reminderMinute = minute)
+    }
+
+    fun setReminderDays(bookId: String, days: Set<Int>) = updateBook(bookId) {
+        it.copy(reminderDays = days)
     }
 
     private fun updateBook(id: String, change: (Book) -> Book) = mutate { list ->

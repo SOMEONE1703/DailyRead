@@ -13,19 +13,32 @@ support for multiple books.
 - **Splitting:** by PDF bookmarks via `pdfbox-android` at a chosen depth (Chapters / Sections /
   Sub-sections), or fixed N pages per day as a fallback. A parent bookmark directly followed by its
   child is folded into the child; bookmarks sharing a page share that page.
+- **Backup:** cloud backup keeps `library.json` but excludes `books/` (PDFs could exceed the 25 MB
+  quota and stop the whole backup). A restored book has no PDF until reimported from the reader,
+  which accepts only a file with the same page count and keeps the plan and progress.
 - **Rendering:** Android's `PdfRenderer` (serialised with a Mutex, LRU bitmap cache).
 - **Persistence:** one JSON file (`filesDir/library.json`) via kotlinx.serialization, written
   atomically. No Room unless the data model grows.
-- **Reminders:** one `AlarmManager` alarm per book, re-armed each time it fires. Exact if allowed,
-  else a 10-minute window. Skips the notification if something was already read today. Re-armed on
-  boot, app update and time/timezone changes. Tapping the notification opens the next reading.
+- **Reminders:** one `AlarmManager` alarm per book, re-armed each time it fires for the book's next
+  chosen weekday (`reminderDays`, ISO numbers, every day by default; at least one stays selected).
+  Exact if allowed, else a 10-minute window. Skips the notification if something was already read
+  today. Re-armed on boot, app update and time/timezone changes. Tapping the notification opens the
+  next reading.
 - **Progress:** "next reading" = first not-done reading, so missed days roll forward. Streak =
   consecutive days with at least one reading done, across all books.
+
+- **Look:** warm paper and ink-green palette with amber for the streak, light and dark, in
+  `ui/theme/`. Dynamic color is off on purpose. System serif for titles, sans for everything else.
+- **Home:** one "Today" card with the next reading, then a 7-day streak strip, then the books.
+- **Reader:** controls hide on scroll down and return on tap or at the end. Finishing a reading
+  opens a sheet with the streak and what to do next.
+- **Time estimates** assume 2 minutes per page (`MINUTES_PER_PAGE` in `ui/Common.kt`).
 
 ## Status
 - **Builds:** `assembleDebug` and `testDebugUnitTest` pass (2026-10-31) with Android Studio's JBR as
   `JAVA_HOME`. No version bumps or code changes were needed; the catalog resolved as written.
-- Not yet run on a device or emulator.
+- Runs on the `Pixel_9_Pro` emulator: home, book, reader and the done sheet checked. The import
+  screen and hide-on-scroll haven't been exercised since the redesign.
 - Bookmark-splitting logic was checked against a sample outline; no unit tests yet.
 
 ## Layout (`app/src/main/java/com/someone1703/dailyread/`)
@@ -36,7 +49,7 @@ data/               Models.kt (Book, Reading, streak), BookRepository.kt (JSON s
 pdf/                PdfOutline.kt (bookmarks -> readings), PdfPageRenderer.kt
 reminders/          ReminderScheduler.kt, ReminderReceiver.kt (+ RescheduleReceiver), Notifications.kt
 ui/                 LibraryScreen, ImportScreen + ImportViewModel, BookScreen, ReaderScreen, Common
-ui/theme/           Template theme (Color, Theme, Type)
+ui/theme/           App theme (Color, Theme, Type)
 ```
 
 ## Running it

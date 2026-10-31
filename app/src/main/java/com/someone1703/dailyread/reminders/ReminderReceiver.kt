@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.someone1703.dailyread.DailyReadApp
 
-/** Fires at the book's reminder time: notify about the next reading, then arm tomorrow's alarm. */
+/** Fires at the book's reminder time: notify about the next reading, then arm the next alarm. */
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val repo = (context.applicationContext as DailyReadApp).repository
@@ -13,7 +13,7 @@ class ReminderReceiver : BroadcastReceiver() {
         val book = repo.book(bookId) ?: return
 
         val next = book.nextIndex
-        // Skip the nudge if today's reading is already done, but keep tomorrow's alarm.
+        // Skip the nudge if today's reading is already done, but keep the next alarm.
         if (next != null && !book.readToday()) {
             Notifications.showReadingReminder(context, book, next)
         }
