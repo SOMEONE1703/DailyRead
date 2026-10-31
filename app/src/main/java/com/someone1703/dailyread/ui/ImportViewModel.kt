@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.someone1703.dailyread.DailyReadApp
 import com.someone1703.dailyread.data.Book
+import com.someone1703.dailyread.data.EVERY_DAY
 import com.someone1703.dailyread.data.Reading
 import com.someone1703.dailyread.pdf.PdfInfo
 import com.someone1703.dailyread.pdf.PdfOutline
@@ -39,6 +40,7 @@ data class ImportState(
     val reminderHour: Int = 7,
     val reminderMinute: Int = 0,
     val reminderEnabled: Boolean = true,
+    val reminderDays: Set<Int> = EVERY_DAY,
 ) {
     val selectedCount: Int get() = included.size
 }
@@ -94,6 +96,8 @@ class ImportViewModel(app: Application) : AndroidViewModel(app) {
         it.copy(reminderEnabled = enabled, reminderHour = hour, reminderMinute = minute)
     }
 
+    fun setReminderDays(days: Set<Int>) = _state.update { it.copy(reminderDays = days) }
+
     /** Creates the book and arms its reminder. Returns the new book's id. */
     fun save(): String? {
         val s = _state.value
@@ -111,6 +115,7 @@ class ImportViewModel(app: Application) : AndroidViewModel(app) {
             reminderEnabled = s.reminderEnabled,
             reminderHour = s.reminderHour,
             reminderMinute = s.reminderMinute,
+            reminderDays = s.reminderDays,
         )
         repo.add(book)
         ReminderScheduler.schedule(getApplication(), book)

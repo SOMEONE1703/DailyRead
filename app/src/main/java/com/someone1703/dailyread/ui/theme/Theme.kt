@@ -1,58 +1,90 @@
 package com.someone1703.dailyread.ui.theme
 
-import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+    primary = Mint,
+    onPrimary = OnMint,
+    primaryContainer = MintContainer,
+    onPrimaryContainer = OnMintContainer,
+    secondary = Sage,
+    onSecondary = OnMint,
+    secondaryContainer = SageContainer,
+    onSecondaryContainer = OnSageContainer,
+    tertiary = Honey,
+    onTertiary = OnAmberContainer,
+    tertiaryContainer = HoneyContainer,
+    onTertiaryContainer = OnHoneyContainer,
+    background = Night,
+    onBackground = Parchment,
+    surface = Night,
+    onSurface = Parchment,
+    surfaceVariant = NightVariant,
+    onSurfaceVariant = ParchmentMuted,
+    surfaceDim = Night,
+    surfaceBright = NightBright,
+    surfaceContainerLowest = NightLowest,
+    surfaceContainerLow = NightLow,
+    surfaceContainer = NightMid,
+    surfaceContainerHigh = NightHigh,
+    surfaceContainerHighest = NightHighest,
+    outline = NightRule,
+    outlineVariant = NightRuleSoft,
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    primary = InkGreen,
+    onPrimary = OnInkGreen,
+    primaryContainer = InkGreenContainer,
+    onPrimaryContainer = OnInkGreenContainer,
+    secondary = Moss,
+    onSecondary = OnInkGreen,
+    secondaryContainer = MossContainer,
+    onSecondaryContainer = OnMossContainer,
+    tertiary = Amber,
+    onTertiary = OnInkGreen,
+    tertiaryContainer = AmberContainer,
+    onTertiaryContainer = OnAmberContainer,
+    background = Paper,
+    onBackground = Ink,
+    surface = Paper,
+    onSurface = Ink,
+    surfaceVariant = PaperVariant,
+    onSurfaceVariant = InkMuted,
+    surfaceDim = PaperDim,
+    surfaceBright = Paper,
+    surfaceContainerLowest = PaperBright,
+    surfaceContainerLow = PaperLow,
+    surfaceContainer = PaperMid,
+    surfaceContainerHigh = PaperHigh,
+    surfaceContainerHighest = PaperHighest,
+    outline = Rule,
+    outlineVariant = RuleSoft,
 )
 
+private val AppShapes = Shapes(
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(24.dp),
+)
+
+// Dynamic color is left out on purpose: the paper-and-ink palette is the app's identity.
 @Composable
 fun DailyReadTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
         typography = Typography,
+        shapes = AppShapes,
         content = content
     )
 }

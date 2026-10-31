@@ -1,19 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
+   Cloud backup keeps library.json (plan and progress) but not the PDFs: they could exceed the 25 MB
+   quota, which would stop the whole backup. After a restore the reader asks for the PDF again.
    See https://developer.android.com/about/versions/12/backup-restore#xml-changes
    for details.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="file" path="books" />
     </cloud-backup>
-    <!--
-    <device-transfer>
-        <include .../>
-        <exclude .../>
-    </device-transfer>
-    -->
 </data-extraction-rules>

@@ -10,6 +10,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.navigation.NavType
@@ -34,7 +37,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (savedInstanceState == null) pendingRoute.value = routeFrom(intent)
 
-        setContent {0
+        setContent {
             DailyReadTheme {
                 val nav = rememberNavController()
 
@@ -57,7 +60,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                NavHost(navController = nav, startDestination = "library") {
+                NavHost(
+                    navController = nav,
+                    startDestination = "library",
+                    enterTransition = { fadeIn(tween(220)) },
+                    exitTransition = { fadeOut(tween(120)) },
+                    popEnterTransition = { fadeIn(tween(220)) },
+                    popExitTransition = { fadeOut(tween(120)) },
+                ) {
                     composable("library") {
                         LibraryScreen(
                             onImport = { uri -> nav.navigate("import/${Uri.encode(uri.toString())}") },
