@@ -24,7 +24,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.automirrored.filled.CallMerge
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -35,6 +37,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -55,7 +58,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,6 +69,8 @@ import com.someone1703.dailyread.data.Book
 import com.someone1703.dailyread.data.Reading
 import com.someone1703.dailyread.reminders.Notifications
 import com.someone1703.dailyread.reminders.ReminderScheduler
+import com.someone1703.dailyread.text.PrepProgress
+import com.someone1703.dailyread.text.TextPrep
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,6 +82,8 @@ fun BookScreen(bookId: String, onBack: () -> Unit, onRead: (String, Int) -> Unit
     var showTime by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf<Int?>(null) }
+    val prep by rememberTextStore().progress.collectAsStateWithLifecycle()
 
     LaunchedEffect(book == null) { if (book == null) onBack() }
     if (book == null) return
@@ -123,7 +132,7 @@ fun BookScreen(bookId: String, onBack: () -> Unit, onRead: (String, Int) -> Unit
         ) {
             item(key = "summary") {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    BookSummary(book, onRead = { i -> onRead(bookId, i) })
+                    BookSummary(book, prep[bookId], onRead = { i -> onRead(bookId, i) })
                     ReminderCard(
                         enabled = book.reminderEnabled,
                         days = book.reminderDays,
@@ -158,6 +167,15 @@ fun BookScreen(bookId: String, onBack: () -> Unit, onRead: (String, Int) -> Unit
                         repo.setDone(bookId, i, done)
                         reschedule()
                     },
+                    onRename = { renaming = i },
+                    onMergeWithNext = if (i < book.readings.lastIndex) {
+                        {
+                            repo.mergeWithNext(bookId, i)
+                            reschedule()
+                        }
+                    } else {
+                        null
+                    },
                 )
             }
         }
@@ -176,6 +194,22 @@ fun BookScreen(bookId: String, onBack: () -> Unit, onRead: (String, Int) -> Unit
         )
     }
 
+    renaming?.let { i ->
+        val reading = book.readings.getOrNull(i)
+        if (reading == null) {
+            renaming = null
+        } else {
+            RenameDialog(
+                current = reading.title,
+                onDismiss = { renaming = null },
+                onConfirm = {
+                    repo.renameReading(bookId, i, it)
+                    renaming = null
+                },
+            )
+        }
+    }
+
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -186,6 +220,7 @@ fun BookScreen(bookId: String, onBack: () -> Unit, onRead: (String, Int) -> Unit
                     onClick = {
                         ReminderScheduler.cancel(context, bookId)
                         Notifications.cancel(context, bookId)
+                        TextPrep.forget(context, bookId)
                         repo.delete(bookId)
                         confirmDelete = false
                     },
@@ -198,7 +233,7 @@ fun BookScreen(bookId: String, onBack: () -> Unit, onRead: (String, Int) -> Unit
 }
 
 @Composable
-private fun BookSummary(book: Book, onRead: (Int) -> Unit) {
+private fun BookSummary(book: Book, prep: PrepProgress?, onRead: (Int) -> Unit) {
     val total = book.readings.size
     val next = book.nextIndex
     val pagesLeft = book.readings.filterNot { it.isDone }.sumOf { it.pageCount }
@@ -214,6 +249,10 @@ private fun BookSummary(book: Book, onRead: (Int) -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+        if (!book.textReady) {
+            Spacer(Modifier.height(16.dp))
+            PreparingRow(prep, Modifier.fillMaxWidth())
         }
         if (next != null) {
             Spacer(Modifier.height(16.dp))
@@ -231,8 +270,11 @@ private fun ReadingRow(
     isNext: Boolean,
     onOpen: () -> Unit,
     onDoneChange: (Boolean) -> Unit,
+    onRename: () -> Unit,
+    onMergeWithNext: (() -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
+    var menu by remember { mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -240,7 +282,7 @@ private fun ReadingRow(
             .clip(MaterialTheme.shapes.medium)
             .background(if (isNext) colors.secondaryContainer else colors.surface)
             .clickable(onClick = onOpen)
-            .padding(end = 16.dp, top = 4.dp, bottom = 4.dp),
+            .padding(end = 4.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // The larger target keeps the marker easy to tap while the circle itself stays small.
@@ -287,5 +329,53 @@ private fun ReadingRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Box {
+            IconButton(onClick = { menu = true }) {
+                Icon(Icons.Filled.MoreVert, contentDescription = "Options for day $day")
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                    onClick = {
+                        menu = false
+                        onRename()
+                    },
+                )
+                if (onMergeWithNext != null) {
+                    DropdownMenuItem(
+                        text = { Text("Merge with next day") },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.CallMerge, contentDescription = null) },
+                        onClick = {
+                            menu = false
+                            onMergeWithNext()
+                        },
+                    )
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun RenameDialog(current: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    // Starts fully selected, so typing replaces the old title.
+    var text by remember { mutableStateOf(TextFieldValue(current, TextRange(0, current.length))) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename reading") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                label = { Text("Title") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text.text) }, enabled = text.text.isNotBlank()) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

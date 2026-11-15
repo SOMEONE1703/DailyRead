@@ -48,6 +48,7 @@ import com.someone1703.dailyread.DailyReadApp
 import com.someone1703.dailyread.data.Book
 import com.someone1703.dailyread.data.BookRepository
 import com.someone1703.dailyread.data.EVERY_DAY
+import com.someone1703.dailyread.text.TextStore
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.TextStyle
@@ -231,6 +232,10 @@ fun MessageState(
 @Composable
 fun rememberRepository(): BookRepository =
     (LocalContext.current.applicationContext as DailyReadApp).repository
+
+@Composable
+fun rememberTextStore(): TextStore =
+    (LocalContext.current.applicationContext as DailyReadApp).textStore
 
 val Book.progress: Float
     get() = if (readings.isEmpty()) 0f else doneCount.toFloat() / readings.size

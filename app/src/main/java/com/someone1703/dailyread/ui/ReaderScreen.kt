@@ -1,5 +1,6 @@
 package com.someone1703.dailyread.ui
 
+import android.content.Context
 import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,23 +32,34 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,24 +92,46 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.someone1703.dailyread.data.Book
 import com.someone1703.dailyread.data.readingStreak
 import com.someone1703.dailyread.pdf.PdfPageRenderer
 import com.someone1703.dailyread.reminders.Notifications
 import com.someone1703.dailyread.reminders.ReminderScheduler
+import com.someone1703.dailyread.text.BlockKind
+import com.someone1703.dailyread.text.PendingPages
+import com.someone1703.dailyread.text.ReadBlock
+import com.someone1703.dailyread.text.ReaderItem
+import com.someone1703.dailyread.text.ReadingText
+import com.someone1703.dailyread.text.TextPrep
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private val ZOOM_LEVELS = listOf(1f, 1.5f, 2f)
+private val TEXT_SCALES = listOf(0.9f, 1f, 1.15f, 1.3f)
 private val TOP_BAR_CLEARANCE = 72.dp
 private val BOTTOM_BAR_CLEARANCE = 72.dp
+
+/** The text of a reading, or why there isn't any yet. */
+private sealed interface ReadingContent {
+    data object Loading : ReadingContent
+    /** The PdfBox pass hasn't finished, so no page has text yet. */
+    data object Preparing : ReadingContent
+    data class Ready(val items: List<ReaderItem>) : ReadingContent
+}
+
+private fun readerPrefs(context: Context) = context.getSharedPreferences("reader", Context.MODE_PRIVATE)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,6 +143,7 @@ fun ReaderScreen(
 ) {
     val context = LocalContext.current
     val repo = rememberRepository()
+    val textStore = rememberTextStore()
     val books by repo.books.collectAsStateWithLifecycle()
     val book = books.firstOrNull { it.id == bookId }
     val reading = book?.readings?.getOrNull(index)
@@ -117,10 +152,7 @@ fun ReaderScreen(
     if (book == null || reading == null) return
 
     var pdfRestores by remember { mutableIntStateOf(0) }
-    val renderer = remember(bookId, pdfRestores) {
-        runCatching { PdfPageRenderer(repo.fileFor(book)) }.getOrNull()
-    }
-    DisposableEffect(renderer) { onDispose { renderer?.close() } }
+    val hasPdf = remember(bookId, pdfRestores) { repo.fileFor(book).exists() }
 
     val scope = rememberCoroutineScope()
     var reimportFailed by remember { mutableStateOf(false) }
@@ -132,23 +164,75 @@ fun ReaderScreen(
                 }.getOrDefault(false)
             }
             reimportFailed = !restored
-            if (restored) pdfRestores++
+            if (restored) {
+                pdfRestores++
+                TextPrep.start(context, book.id, book.fileName, book.title)
+            }
         }
     }
 
+    // Text, reloaded whenever more of this book's text is prepared (e.g. a scanned page recognized).
+    val versions by textStore.versions.collectAsStateWithLifecycle()
+    val version = versions[bookId] ?: 0
+    val next = book.readings.getOrNull(index + 1)
+    val content by produceState<ReadingContent>(ReadingContent.Loading, bookId, reading, next, version) {
+        value = withContext(Dispatchers.IO) {
+            val meta = textStore.meta(bookId)
+            if (meta?.extracted != true) {
+                ReadingContent.Preparing
+            } else {
+                val scanned = meta.scannedPages.toSet()
+                ReadingContent.Ready(
+                    ReadingText.assemble(
+                        reading = reading,
+                        next = next,
+                        load = { textStore.page(bookId, it) },
+                        isPending = { it in scanned && !textStore.hasPage(bookId, it) },
+                    )
+                )
+            }
+        }
+    }
+    val prep by textStore.progress.collectAsStateWithLifecycle()
+
+    // Scanned pages of this reading jump the queue.
+    val pendingHere = (content as? ReadingContent.Ready)?.items?.filterIsInstance<PendingPages>()
+        ?.flatMap { it.pages }.orEmpty()
+    LaunchedEffect(pendingHere) {
+        if (pendingHere.isNotEmpty()) TextPrep.requestPages(context, book, pendingHere)
+    }
+
+    val prefs = remember { readerPrefs(context) }
+    var textScale by remember { mutableFloatStateOf(prefs.getFloat("text_scale", 1f)) }
+    var showOriginal by remember { mutableStateOf(false) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var showBars by remember { mutableStateOf(true) }
     var showCompleted by remember { mutableStateOf(false) }
-    val listState = rememberLazyListState()
+    var showMenu by remember { mutableStateOf(false) }
+    val textState = rememberLazyListState()
+    val pageState = rememberLazyListState()
+    val listState = if (showOriginal) pageState else textState
 
     val pages = remember(reading.startPage, reading.endPage) { (reading.startPage..reading.endPage).toList() }
-    val currentPage by remember(pages) {
-        derivedStateOf { (listState.firstVisibleItemIndex + 1).coerceAtMost(pages.size) }
+    val items = (content as? ReadingContent.Ready)?.items.orEmpty()
+    val currentPage by remember(pages, items, showOriginal) {
+        derivedStateOf {
+            if (showOriginal) {
+                pages.getOrElse(listState.firstVisibleItemIndex) { reading.endPage }
+            } else {
+                items.getOrNull(listState.firstVisibleItemIndex)?.page ?: reading.startPage
+            }
+        }
     }
-    val atEnd by remember { derivedStateOf { !listState.canScrollForward } }
-    val pageProgress = if (atEnd) 1f else (currentPage - 1).toFloat() / pages.size
+    val atEnd by remember(listState) { derivedStateOf { !listState.canScrollForward } }
+    val itemCount = if (showOriginal) pages.size else items.size
+    val progress = when {
+        atEnd -> 1f
+        itemCount == 0 -> 0f
+        else -> listState.firstVisibleItemIndex.toFloat() / itemCount
+    }
 
-    // The page gets the whole screen while you read; the controls return at the end, or on a tap.
+    // The text gets the whole screen while you read; the controls return at the end, or on a tap.
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress && listState.lastScrolledForward }
             .collect { if (it) showBars = false }
@@ -158,9 +242,27 @@ fun ReaderScreen(
             .collect { if (it) showBars = true }
     }
 
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
-        if (renderer == null) {
-            MessageState(
+    val background = if (showOriginal) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surface
+    // A Surface, so text picks up the theme's on-surface color in light and dark.
+    Surface(color = background, modifier = Modifier.fillMaxSize()) { Box(Modifier.fillMaxSize()) {
+        val systemTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+        val systemBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        val padding = PaddingValues(
+            top = systemTop + TOP_BAR_CLEARANCE,
+            bottom = systemBottom + BOTTOM_BAR_CLEARANCE + 8.dp,
+        )
+        val tapToToggle = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) { detectTapGestures { showBars = !showBars } }
+            .semantics {
+                onClick(label = if (showBars) "Hide controls" else "Show controls") {
+                    showBars = !showBars
+                    true
+                }
+            }
+
+        when {
+            !hasPdf -> MessageState(
                 icon = Icons.Filled.ErrorOutline,
                 title = "Couldn't find this book",
                 message = if (reimportFailed) {
@@ -172,40 +274,51 @@ fun ReaderScreen(
                 Button(onClick = { reimportPicker.launch(arrayOf("application/pdf")) }) { Text("Reimport PDF") }
                 TextButton(onClick = onBack) { Text("Go back") }
             }
-        } else {
-            val systemTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-            val systemBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-            BoxWithConstraints(
-                Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) { detectTapGestures { showBars = !showBars } }
-                    .semantics {
-                        onClick(label = if (showBars) "Hide controls" else "Show controls") {
-                            showBars = !showBars
-                            true
-                        }
-                    },
-            ) {
-                val pageWidth = maxWidth * zoom
-                val pageWidthPx = with(LocalDensity.current) { pageWidth.roundToPx() }
-
-                LazyColumn(
-                    Modifier.fillMaxSize(),
-                    state = listState,
-                    contentPadding = PaddingValues(
-                        top = systemTop + TOP_BAR_CLEARANCE,
-                        bottom = systemBottom + BOTTOM_BAR_CLEARANCE + 8.dp,
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+            showOriginal -> OriginalPages(book, pdfRestores, pages, zoom, pageState, padding, tapToToggle)
+            else -> when (val c = content) {
+                ReadingContent.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                ReadingContent.Preparing -> MessageState(
+                    icon = Icons.AutoMirrored.Filled.Article,
+                    title = "Preparing the text",
+                    message = prep[bookId]?.let { "Reading page ${it.done} of ${it.total}. You can read the original pages meanwhile." }
+                        ?: "This book's text is being prepared. You can read the original pages meanwhile.",
                 ) {
-                    items(pages, key = { it }) { page ->
-                        PdfPage(renderer, page, pageWidthPx, Modifier.width(pageWidth), zoom > 1f)
+                    Button(onClick = { showOriginal = true }) { Text("Show original pages") }
+                }
+                is ReadingContent.Ready -> if (c.items.isEmpty()) {
+                    MessageState(
+                        icon = Icons.AutoMirrored.Filled.Article,
+                        title = "No text here",
+                        message = "These pages don't seem to have any text. They may be pictures or diagrams.",
+                    ) {
+                        Button(onClick = { showOriginal = true }) { Text("Show original pages") }
+                    }
+                } else {
+                    Box(tapToToggle) {
+                        LazyColumn(
+                            Modifier.fillMaxSize().wrapContentWidth().widthIn(max = MaxContentWidth),
+                            state = textState,
+                            contentPadding = PaddingValues(
+                                start = 24.dp, end = 24.dp,
+                                top = padding.calculateTopPadding() + 8.dp,
+                                bottom = padding.calculateBottomPadding() + 16.dp,
+                            ),
+                        ) {
+                            items(c.items, key = { itemKey(it) }) { item ->
+                                when (item) {
+                                    is ReadBlock -> TextBlockView(item, textScale)
+                                    is PendingPages -> PendingPagesCard(item, onShowOriginal = { showOriginal = true })
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // A solid strip keeps the status bar readable over the page once the top bar hides.
+        // A solid strip keeps the status bar readable over the text once the top bar hides.
         Spacer(
             Modifier
                 .fillMaxWidth()
@@ -215,7 +328,7 @@ fun ReaderScreen(
 
         Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
             AnimatedVisibility(
-                visible = showBars || renderer == null,
+                visible = showBars || !hasPdf,
                 enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
                 exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top),
             ) {
@@ -229,7 +342,7 @@ fun ReaderScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                "Day ${index + 1} of ${book.readings.size} · page $currentPage of ${pages.size}",
+                                "Day ${index + 1} of ${book.readings.size} · page ${currentPage + 1}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -239,26 +352,53 @@ fun ReaderScreen(
                         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                     },
                     actions = {
-                        TextButton(onClick = {
-                            zoom = ZOOM_LEVELS[(ZOOM_LEVELS.indexOf(zoom) + 1) % ZOOM_LEVELS.size]
-                        }) {
-                            Icon(
-                                Icons.Filled.ZoomIn,
-                                contentDescription = "Zoom",
-                                modifier = Modifier.size(ButtonDefaults.IconSize),
-                            )
-                            Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                            Text(if (zoom % 1f == 0f) "${zoom.toInt()}x" else "${zoom}x")
+                        if (hasPdf && showOriginal) {
+                            TextButton(onClick = {
+                                zoom = ZOOM_LEVELS[(ZOOM_LEVELS.indexOf(zoom) + 1) % ZOOM_LEVELS.size]
+                            }) {
+                                Icon(Icons.Filled.ZoomIn, contentDescription = "Zoom", modifier = Modifier.size(ButtonDefaults.IconSize))
+                                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                                Text(if (zoom % 1f == 0f) "${zoom.toInt()}x" else "${zoom}x")
+                            }
+                        } else if (hasPdf) {
+                            IconButton(onClick = {
+                                textScale = TEXT_SCALES[(TEXT_SCALES.indexOf(textScale).coerceAtLeast(0) + 1) % TEXT_SCALES.size]
+                                prefs.edit().putFloat("text_scale", textScale).apply()
+                            }) {
+                                Icon(Icons.Filled.FormatSize, contentDescription = "Text size")
+                            }
+                        }
+                        if (hasPdf) {
+                            Box {
+                                IconButton(onClick = { showMenu = true }) {
+                                    Icon(Icons.Filled.MoreVert, contentDescription = "More options")
+                                }
+                                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (showOriginal) "Show text" else "Show original pages") },
+                                        leadingIcon = {
+                                            Icon(
+                                                if (showOriginal) Icons.AutoMirrored.Filled.Article else Icons.Filled.PictureAsPdf,
+                                                contentDescription = null,
+                                            )
+                                        },
+                                        onClick = {
+                                            showMenu = false
+                                            showOriginal = !showOriginal
+                                        },
+                                    )
+                                }
+                            }
                         }
                     },
                 )
             }
-            if (!showBars && renderer != null) {
+            if (!showBars && hasPdf) {
                 Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
             }
-            if (renderer != null) {
+            if (hasPdf) {
                 LinearProgressIndicator(
-                    progress = { pageProgress },
+                    progress = { progress },
                     modifier = Modifier.fillMaxWidth().height(3.dp),
                     gapSize = 0.dp,
                     drawStopIndicator = {},
@@ -291,7 +431,11 @@ fun ReaderScreen(
                         Button(onClick = {
                             repo.setDone(bookId, index, true)
                             Notifications.cancel(context, bookId)
-                            repo.book(bookId)?.let { ReminderScheduler.schedule(context, it) }
+                            repo.book(bookId)?.let {
+                                ReminderScheduler.schedule(context, it)
+                                // The next readings move up: recognize their scanned pages now.
+                                TextPrep.refresh(context, bookId, notify = false)
+                            }
                             showCompleted = true
                         }) {
                             Icon(Icons.Filled.Check, contentDescription = null, Modifier.size(ButtonDefaults.IconSize))
@@ -305,7 +449,7 @@ fun ReaderScreen(
                 }
             }
         }
-    }
+    } }
 
     if (showCompleted) {
         CompletedSheet(
@@ -316,6 +460,115 @@ fun ReaderScreen(
             onHome = onBack,
             onNext = { onOpen(bookId, index + 1) },
         )
+    }
+}
+
+private fun itemKey(item: ReaderItem): String = when (item) {
+    is ReadBlock -> "b${item.index}"
+    is PendingPages -> "p${item.pages.first()}"
+}
+
+/** One heading, paragraph or code listing, set like a book page. */
+@Composable
+private fun TextBlockView(block: ReadBlock, scale: Float) {
+    val type = MaterialTheme.typography
+    when (block.kind) {
+        BlockKind.HEADING -> {
+            val style = when (block.level) {
+                1 -> type.headlineSmall
+                2 -> type.titleLarge
+                else -> type.titleMedium.copy(fontFamily = FontFamily.Serif)
+            }
+            Text(
+                block.text,
+                style = style.copy(fontSize = style.fontSize * scale, lineHeight = style.lineHeight * scale),
+                modifier = Modifier
+                    .padding(top = if (block.index == 0) 8.dp else 28.dp, bottom = 12.dp)
+                    .semantics { heading() },
+            )
+        }
+        BlockKind.PARAGRAPH -> Text(
+            block.text,
+            style = type.bodyLarge.copy(
+                fontFamily = FontFamily.Serif,
+                fontSize = 18.sp * scale,
+                lineHeight = 1.6.em,
+            ),
+            modifier = Modifier.padding(bottom = 14.dp),
+        )
+        BlockKind.CODE -> Surface(
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
+        ) {
+            Text(
+                block.text,
+                style = type.bodyMedium.copy(fontFamily = FontFamily.Monospace, fontSize = 14.sp * scale, lineHeight = 1.4.em),
+                softWrap = false,
+                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(12.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PendingPagesCard(item: PendingPages, onShowOriginal: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                val first = item.pages.first() + 1
+                val last = item.pages.last() + 1
+                Text(
+                    if (first == last) "Recognizing the text of page $first" else "Recognizing the text of pages $first–$last",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    "This page is a scan. Its text appears here when it's ready.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onShowOriginal, contentPadding = PaddingValues(0.dp)) { Text("Show original pages") }
+            }
+        }
+    }
+}
+
+/** The rendered PDF pages, for figures, tables or when the text isn't ready. */
+@Composable
+private fun OriginalPages(
+    book: Book,
+    restores: Int,
+    pages: List<Int>,
+    zoom: Float,
+    state: LazyListState,
+    padding: PaddingValues,
+    modifier: Modifier,
+) {
+    val repo = rememberRepository()
+    val renderer = remember(book.id, restores) { runCatching { PdfPageRenderer(repo.fileFor(book)) }.getOrNull() }
+    DisposableEffect(renderer) { onDispose { renderer?.close() } }
+    if (renderer == null) {
+        MessageState(Icons.Filled.ErrorOutline, "Couldn't open the PDF", "The original pages can't be shown right now.")
+        return
+    }
+    BoxWithConstraints(modifier) {
+        val pageWidth = maxWidth * zoom
+        val pageWidthPx = with(LocalDensity.current) { pageWidth.roundToPx() }
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            state = state,
+            contentPadding = padding,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(pages, key = { it }) { page ->
+                PdfPage(renderer, page, pageWidthPx, Modifier.width(pageWidth), zoom > 1f)
+            }
+        }
     }
 }
 

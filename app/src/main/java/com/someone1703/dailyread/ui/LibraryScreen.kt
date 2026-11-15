@@ -40,6 +40,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
@@ -63,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.someone1703.dailyread.data.Book
 import com.someone1703.dailyread.data.readingDays
 import com.someone1703.dailyread.data.readingStreak
+import com.someone1703.dailyread.text.PrepProgress
 import java.time.LocalDate
 import java.time.format.TextStyle
 import java.util.Locale
@@ -76,6 +78,7 @@ fun LibraryScreen(
 ) {
     val repo = rememberRepository()
     val books by repo.books.collectAsStateWithLifecycle()
+    val prep by rememberTextStore().progress.collectAsStateWithLifecycle()
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onImport(uri)
@@ -119,7 +122,7 @@ fun LibraryScreen(
                 }
             }
         } else {
-            val todayBook = books.firstOrNull { !it.isFinished && !it.readToday() }
+            val todayBook = books.firstOrNull { it.textReady && !it.isFinished && !it.readToday() }
             LazyColumn(
                 modifier = Modifier.fillMaxSize().wrapContentWidth().widthIn(max = MaxContentWidth),
                 state = listState,
@@ -148,7 +151,7 @@ fun LibraryScreen(
                     )
                 }
                 items(books, key = { it.id }) { book ->
-                    BookRow(book, onOpen = { onOpenBook(book.id) }, onRead = { i -> onRead(book.id, i) })
+                    BookRow(book, prep[book.id], onOpen = { onOpenBook(book.id) }, onRead = { i -> onRead(book.id, i) })
                 }
             }
         }
@@ -293,7 +296,7 @@ private fun DayMark(day: LocalDate, read: Boolean, isToday: Boolean) {
 }
 
 @Composable
-private fun BookRow(book: Book, onOpen: () -> Unit, onRead: (Int) -> Unit) {
+private fun BookRow(book: Book, prep: PrepProgress?, onOpen: () -> Unit, onRead: (Int) -> Unit) {
     val next = book.nextIndex
     OutlinedCard(
         onClick = onOpen,
@@ -325,7 +328,9 @@ private fun BookRow(book: Book, onOpen: () -> Unit, onRead: (Int) -> Unit) {
                 }
             }
             Spacer(Modifier.height(12.dp))
-            if (next == null) {
+            if (!book.textReady) {
+                PreparingRow(prep)
+            } else if (next == null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Filled.CheckCircle,
@@ -364,6 +369,33 @@ private fun BookRow(book: Book, onOpen: () -> Unit, onRead: (Int) -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** Shown in place of "Up next" until the book's text is ready. */
+@Composable
+fun PreparingRow(prep: PrepProgress?, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(
+            when (prep?.phase) {
+                PrepProgress.Phase.RECOGNIZING -> "Preparing… recognizing scanned pages"
+                else -> "Preparing…"
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.height(6.dp))
+        if (prep != null) {
+            LinearProgressIndicator(progress = { prep.fraction }, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Page ${prep.done} of ${prep.total}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
     }
 }
