@@ -5,4 +5,5 @@
 -->
 <full-backup-content>
     <exclude domain="file" path="books" />
+    <exclude domain="file" path="text" />
 </full-backup-content>

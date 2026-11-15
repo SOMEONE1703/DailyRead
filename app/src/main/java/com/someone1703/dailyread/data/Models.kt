@@ -16,7 +16,14 @@ data class Reading(
     val startPage: Int,
     val endPage: Int,
     val completedAt: Long? = null,
+    /**
+     * The heading this reading starts at, used to cut shared pages between readings. Set when the
+     * user renames a reading so the original heading can still be found in the text.
+     */
+    val anchor: String? = null,
 ) {
+    /** Text to look for at the start of this reading. */
+    val anchorTitle: String get() = anchor ?: title
     val pageCount: Int get() = endPage - startPage + 1
     val isDone: Boolean get() = completedAt != null
 }
@@ -35,6 +42,13 @@ data class Book(
     /** Days the reminder fires. Books saved before this field existed load as every day. */
     val reminderDays: Set<Int> = EVERY_DAY,
     val createdAt: Long = System.currentTimeMillis(),
+    /**
+     * The text of the book has been prepared for the reader (see text/TextPrep). Books saved before
+     * the text reader existed load as false and are prepared again on the next start.
+     */
+    val textReady: Boolean = false,
+    /** The PDF had no bookmarks: replace the page-count plan with detected headings once the text is ready. */
+    val autoSplit: Boolean = false,
 ) {
     /** The first reading not yet done. Missed days simply roll forward, nothing piles up. */
     val nextIndex: Int? get() = readings.indexOfFirst { !it.isDone }.takeIf { it >= 0 }

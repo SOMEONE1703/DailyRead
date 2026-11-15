@@ -17,6 +17,8 @@ import com.someone1703.dailyread.data.Book
 
 object Notifications {
     const val CHANNEL_ID = "daily_reading"
+    const val PREP_CHANNEL_ID = "book_prep"
+    const val READY_CHANNEL_ID = "book_ready"
     const val EXTRA_BOOK_ID = "book_id"
     const val EXTRA_READING_INDEX = "reading_index"
 
@@ -26,7 +28,69 @@ object Notifications {
             context.getString(R.string.channel_name),
             NotificationManager.IMPORTANCE_DEFAULT,
         )
-        context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        val prep = NotificationChannel(
+            PREP_CHANNEL_ID,
+            context.getString(R.string.prep_channel_name),
+            NotificationManager.IMPORTANCE_LOW,
+        )
+        val ready = NotificationChannel(
+            READY_CHANNEL_ID,
+            context.getString(R.string.ready_channel_name),
+            NotificationManager.IMPORTANCE_DEFAULT,
+        )
+        context.getSystemService(NotificationManager::class.java)
+            .createNotificationChannels(listOf(channel, prep, ready))
+    }
+
+    fun prepNotificationId(bookId: String) = "prep:$bookId".hashCode()
+
+    /** The ongoing notification shown while a book's text is prepared. */
+    fun prepProgress(context: Context, bookId: String, title: String, text: String, done: Int, total: Int) =
+        NotificationCompat.Builder(context, PREP_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Preparing $title")
+            .setContentText(text)
+            .setProgress(total, done, total == 0)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setContentIntent(openBook(context, bookId))
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .build()
+
+    fun showBookReady(context: Context, book: Book, scannedLeft: Int) {
+        if (!canPost(context)) return
+        val text = if (scannedLeft > 0) {
+            "Your first readings are ready. The other $scannedLeft scanned pages will be recognized while charging."
+        } else {
+            "${book.readings.size} readings are ready to start."
+        }
+        val notification = NotificationCompat.Builder(context, READY_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("${book.title} is ready")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(openBook(context, book.id))
+            .setAutoCancel(true)
+            .build()
+        try {
+            NotificationManagerCompat.from(context).notify(prepNotificationId(book.id) + 1, notification)
+        } catch (e: SecurityException) {
+            // Permission revoked between the check and the call; nothing to do.
+        }
+    }
+
+    private fun openBook(context: Context, bookId: String): PendingIntent {
+        val open = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(EXTRA_BOOK_ID, bookId)
+        }
+        return PendingIntent.getActivity(
+            context,
+            prepNotificationId(bookId),
+            open,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     fun canPost(context: Context): Boolean =

@@ -18,6 +18,10 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // ML Kit's text recognizer ships an ~11 MB native library per ABI: keep 64-bit phones and
+        // the x86_64 emulator only.
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
     buildTypes {
@@ -52,7 +56,9 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.pdfbox.android)  // reads PDF bookmarks; pages render with Android's PdfRenderer
+    implementation(libs.pdfbox.android)  // bookmarks and the text layer; pages render with Android's PdfRenderer
+    implementation(libs.mlkit.text.recognition)  // on-device OCR for image-only pages (bundled model)
+    implementation(libs.androidx.work.runtime.ktx)  // background text preparation
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

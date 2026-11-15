@@ -84,8 +84,10 @@ class MainActivity : ComponentActivity() {
                         ImportScreen(
                             uri = uri,
                             onBack = { nav.popBackStack() },
-                            onSaved = { id ->
-                                nav.navigate("book/$id") { popUpTo("library") }
+                            onSaved = { result ->
+                                // Still preparing: back to the library, where it shows as "Preparing…".
+                                if (result.ready) nav.navigate("book/${result.bookId}") { popUpTo("library") }
+                                else nav.popBackStack("library", inclusive = false)
                             },
                         )
                     }

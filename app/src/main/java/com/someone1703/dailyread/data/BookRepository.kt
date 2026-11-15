@@ -68,6 +68,35 @@ class BookRepository(context: Context) {
         it.copy(reminderDays = days)
     }
 
+    fun setTextReady(bookId: String, ready: Boolean) = updateBook(bookId) { it.copy(textReady = ready) }
+
+    /** Swaps in a new plan, but only while nothing has been read, so progress is never lost. */
+    fun replaceReadings(bookId: String, readings: List<Reading>) = updateBook(bookId) { book ->
+        if (book.doneCount == 0 && readings.isNotEmpty()) book.copy(readings = readings, autoSplit = false)
+        else book.copy(autoSplit = false)
+    }
+
+    fun renameReading(bookId: String, index: Int, title: String) = updateBook(bookId) { book ->
+        val clean = title.trim()
+        if (clean.isEmpty()) return@updateBook book
+        book.copy(readings = book.readings.mapIndexed { i, r -> if (i == index) r.copy(title = clean, anchor = r.anchorTitle) else r })
+    }
+
+    /**
+     * Joins a reading with the one after it into a single day. It keeps the first title, and counts
+     * as done only if both were.
+     */
+    fun mergeWithNext(bookId: String, index: Int) = updateBook(bookId) { book ->
+        val a = book.readings.getOrNull(index) ?: return@updateBook book
+        val b = book.readings.getOrNull(index + 1) ?: return@updateBook book
+        val merged = a.copy(
+            startPage = minOf(a.startPage, b.startPage),
+            endPage = maxOf(a.endPage, b.endPage),
+            completedAt = if (a.isDone && b.isDone) maxOf(a.completedAt!!, b.completedAt!!) else null,
+        )
+        book.copy(readings = book.readings.take(index) + merged + book.readings.drop(index + 2))
+    }
+
     private fun updateBook(id: String, change: (Book) -> Book) = mutate { list ->
         list.map { if (it.id == id) change(it) else it }
     }

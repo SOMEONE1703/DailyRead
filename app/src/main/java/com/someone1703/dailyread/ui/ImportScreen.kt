@@ -24,6 +24,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +56,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.someone1703.dailyread.text.PrepProgress
+import com.someone1703.dailyread.text.ocrEstimateLabel
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -61,7 +66,7 @@ import java.time.format.DateTimeFormatter
 fun ImportScreen(
     uri: Uri,
     onBack: () -> Unit,
-    onSaved: (String) -> Unit,
+    onSaved: (SaveResult) -> Unit,
     vm: ImportViewModel = viewModel(),
 ) {
     LaunchedEffect(uri) { vm.load(uri) }
@@ -86,7 +91,15 @@ fun ImportScreen(
                         Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        if (s.selectedCount > 0) {
+                        if (s.selectedCount > 0 && !s.readyOnSave) {
+                            Text(
+                                "The text is still being prepared. We'll let you know when it's ready.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        } else if (s.selectedCount > 0) {
                             Text(
                                 "One a day, you'd finish around ${finishDateLabel(s.selectedCount)}",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -101,9 +114,10 @@ fun ImportScreen(
                             modifier = Modifier.fillMaxWidth().height(52.dp),
                         ) {
                             Text(
-                                when (s.selectedCount) {
-                                    0 -> "Select at least one reading"
-                                    1 -> "Create plan · 1 day"
+                                when {
+                                    s.selectedCount == 0 -> "Select at least one reading"
+                                    !s.readyOnSave -> "Continue in background"
+                                    s.selectedCount == 1 -> "Create plan · 1 day"
                                     else -> "Create plan · ${s.selectedCount} days"
                                 }
                             )
@@ -142,6 +156,9 @@ fun ImportScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
 
+                        Spacer(Modifier.height(16.dp))
+                        TextPrepCard(s, Modifier.fillMaxWidth())
+
                         Spacer(Modifier.height(24.dp))
                         SectionTitle("How much each day?")
                         Spacer(Modifier.height(8.dp))
@@ -150,19 +167,30 @@ fun ImportScreen(
                             for (depth in 1..minOf(maxDepth, 3)) {
                                 FilterChip(
                                     selected = s.mode == SplitMode.Bookmarks(depth),
-                                    onClick = { vm.setMode(SplitMode.Bookmarks(depth)) },
+                                    onClick = { vm.pickMode(SplitMode.Bookmarks(depth)) },
                                     label = { Text(bookmarkLevelLabel(depth)) },
+                                )
+                            }
+                            if (maxDepth == 0 && s.headingDepth > 0) {
+                                FilterChip(
+                                    selected = s.mode is SplitMode.Headings,
+                                    onClick = { vm.pickMode(SplitMode.Headings(s.headingDepth)) },
+                                    label = { Text("Headings") },
                                 )
                             }
                             FilterChip(
                                 selected = s.mode is SplitMode.Pages,
-                                onClick = { vm.setMode(SplitMode.Pages((s.mode as? SplitMode.Pages)?.perDay ?: 10)) },
+                                onClick = { vm.pickMode(SplitMode.Pages((s.mode as? SplitMode.Pages)?.perDay ?: 10)) },
                                 label = { Text("Fixed pages") },
                             )
                         }
                         if (maxDepth == 0) {
                             Text(
-                                "This PDF has no bookmarks, so it's split by page count.",
+                                when {
+                                    !s.extracted -> "This PDF has no bookmarks. Headings will be looked for in the text."
+                                    s.headingDepth > 0 -> "This PDF has no bookmarks, so the readings follow headings found in the text."
+                                    else -> "This PDF has no bookmarks and no clear headings, so it's split by page count."
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -174,7 +202,7 @@ fun ImportScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Pages per day", Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
                                 IconButton(
-                                    onClick = { vm.setMode(SplitMode.Pages((pages.perDay - 1).coerceAtLeast(1))) },
+                                    onClick = { vm.pickMode(SplitMode.Pages((pages.perDay - 1).coerceAtLeast(1))) },
                                     enabled = pages.perDay > 1,
                                 ) {
                                     Icon(Icons.Filled.Remove, contentDescription = "Fewer pages")
@@ -185,7 +213,7 @@ fun ImportScreen(
                                     style = MaterialTheme.typography.titleMedium,
                                     textAlign = TextAlign.Center,
                                 )
-                                IconButton(onClick = { vm.setMode(SplitMode.Pages(pages.perDay + 1)) }) {
+                                IconButton(onClick = { vm.pickMode(SplitMode.Pages(pages.perDay + 1)) }) {
                                     Icon(Icons.Filled.Add, contentDescription = "More pages")
                                 }
                             }
@@ -257,6 +285,50 @@ fun ImportScreen(
                 showTime = false
             },
         )
+    }
+}
+
+/** How far the text preparation has got, and what to expect for scanned pages. */
+@Composable
+private fun TextPrepCard(s: ImportState, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            val prep = s.prep
+            val title = when {
+                !s.extracted -> "Preparing the text"
+                prep?.phase == PrepProgress.Phase.RECOGNIZING -> "Recognizing scanned pages"
+                else -> "Text ready"
+            }
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            val detail = when {
+                prep != null -> "Page ${prep.done} of ${prep.total}"
+                !s.extracted -> "Starting…"
+                else -> null
+            }
+            if (detail != null) {
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (prep != null) {
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(progress = { prep.fraction }, modifier = Modifier.fillMaxWidth())
+            } else if (!s.extracted) {
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            val scanned = s.scannedCount
+            if (scanned > 0) {
+                Spacer(Modifier.height(8.dp))
+                val pages = if (scanned == 1) "1 page is an image" else "$scanned pages are images"
+                Text(
+                    "$pages. Text will be prepared with text recognition, ${ocrEstimateLabel(scanned)} in all. " +
+                        "The next readings go first, the rest while your phone is charging.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
     }
 }
 
